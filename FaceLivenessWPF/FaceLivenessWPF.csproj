@@ -1,0 +1,24 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>       
+
+  </PropertyGroup>
+	<ItemGroup>
+		<PackageReference Include="SixLabors.ImageSharp" Version="3.1.4" />
+		<PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.18.0" />
+		<PackageReference Include="FaceAiSharp" Version="0.5.23" />
+		<PackageReference Include="FaceAiSharp.Bundle" Version="0.5.23" />
+		<PackageReference Include="FlashCap" Version="1.10.0" />
+		<PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
+	</ItemGroup> 
+  <ItemGroup>
+    <None Update="OULU_Protocol_2_model_0_0.onnx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

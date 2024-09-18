@@ -10,22 +10,21 @@ using System.Windows.Media.Imaging;
 
 using CommunityToolkit.Mvvm.ComponentModel;
 
-using FaceAiSharp;
 using FlashCap;
 
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp;
 using FaceLivenessWPF.Models;
 using System.Windows.Media;
+using SeetaFace6Sharp.Extension.DependencyInjection;
+using SeetaFace6Sharp;
+using SkiaSharp;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace FaceLivenessWPF
 {
     public partial class MainViewModel : ObservableObject
     {
-        private IFaceDetector det;
-        private IFaceEmbeddingsGenerator rec;
+        private SeetaFace6SharpFactory _faceFactory;
         private CaptureDevice camera;
-        private LivenessDetection ldec;
         CaptureDeviceDescriptor descriptor;
         private VideoCharacteristics characteristics;
         private Timer faceTimer;
@@ -36,9 +35,6 @@ namespace FaceLivenessWPF
 
         public MainViewModel()
         {
-            det = FaceAiSharpBundleFactory.CreateFaceDetector();
-            rec = FaceAiSharpBundleFactory.CreateFaceEmbeddingsGenerator();
-            ldec = new LivenessDetection("OULU_Protocol_2_model_0_0.onnx");
         }
         public async void Loaded()
         {
@@ -52,6 +48,9 @@ namespace FaceLivenessWPF
             }
             descriptor = descriptors.FirstOrDefault(x => x.Characteristics.Length > 0);
             characteristics = descriptor.Characteristics.FirstOrDefault(x => x.PixelFormat != FlashCap.PixelFormats.Unknown);
+
+            _faceFactory = new SeetaFace6SharpFactory(characteristics.Width, characteristics.Height);
+
             //Console.WriteLine($"Characteristics: {characteristics}");
             camera = await descriptor.OpenAsync(
                 characteristics,
@@ -74,9 +73,10 @@ namespace FaceLivenessWPF
         {
             GC.Collect();
             if (lastImageBytes == null) return;
-            using Image<Rgb24> img = SixLabors.ImageSharp.Image.Load<Rgb24>(lastImageBytes);
-            var faces = det.DetectFaces(img);
-            if (faces.Count == 0)
+            using SKBitmap bitmap = SKBitmap.Decode(lastImageBytes);
+            using FaceImage img = bitmap.ToFaceImage();
+            var faceInfos = _faceFactory.Get<FaceDetector>()?.Detect(img);
+            if (faceInfos.Length == 0)
             {
                 App.Current.Dispatcher.Invoke(() =>
                 {
@@ -84,14 +84,20 @@ namespace FaceLivenessWPF
                 });
                 return;
             }
-            var facesInfos = new List<FaceInfo>();
-            foreach (var face in faces)
+            var facesInfos = new List<PhotoDetectFaceInfo>();
+            foreach (var face in faceInfos)
             {
-                FaceInfo faceInfo = new() { FaceDetectorResult = face };
-                var faceImg = img.Clone();
-                rec.AlignFaceUsingLandmarks(faceImg, face.Landmarks!);
-                faceInfo.LivenessScore = ldec.Invoke(faceImg);
-                facesInfos.Add(faceInfo);
+                FaceMarkPoint[] points = _faceFactory.Get<FaceLandmarker>()?.Mark(img, face);
+                PhotoDetectFaceInfo pdfi = new() {
+                    FaceInfo = face,
+                    MaskResult = _faceFactory.Get<MaskDetector>()?.Detect(img, face),
+                    Age = _faceFactory.Get<AgePredictor>()?.PredictAgeWithCrop(img, points),
+                    AntiSpoofing = _faceFactory.Get<FaceAntiSpoofing>()?.Predict(img, face, points),
+                    Quality = _faceFactory.Get<FaceQuality>()?.Detect(img, face, points, QualityType.Clarity),
+                    EyeState = _faceFactory.Get<EyeStateDetector>()?.Detect(img, points),
+                    Gender = _faceFactory.Get<GenderPredictor>()?.PredictGenderWithCrop(img, points)
+                };
+                facesInfos.Add(pdfi);
             }
             // Draw rectangles on the canvas
             App.Current.Dispatcher.Invoke(() =>
@@ -102,26 +108,26 @@ namespace FaceLivenessWPF
 
                    System.Windows.Shapes.Rectangle rect = new()
                     {
-                        Width = (int)face.FaceDetectorResult.Box.Width * (canvas.Width / img.Width),
-                        Height = (int)face.FaceDetectorResult.Box.Height * (canvas.Height / img.Height),
-                        Stroke =  new SolidColorBrush(face.LivenessScore > 0.6 ? Colors.Green: Colors.Red),
+                        Width = (int)face.FaceInfo.Location.Width * (canvas.Width / img.Width),
+                        Height = (int)face.FaceInfo.Location.Height * (canvas.Height / img.Height),
+                        Stroke =  new SolidColorBrush(face.AntiSpoofing?.Status == AntiSpoofingStatus.Real ? Colors.Green: Colors.Red),
                         StrokeThickness = 4,
                         RadiusX = 5,
                         Opacity = 0.5,
                         RadiusY = 5,
                         Fill = System.Windows.Media.Brushes.Transparent
                     };
-                    Canvas.SetLeft(rect, (int)face.FaceDetectorResult.Box.X * (canvas.Width / img.Width));
-                    Canvas.SetTop(rect, (int)face.FaceDetectorResult.Box.Y * (canvas.Height / img.Height));
+                    Canvas.SetLeft(rect, (int)face.FaceInfo.Location.X * (canvas.Width / img.Width));
+                    Canvas.SetTop(rect, (int)face.FaceInfo.Location.Y * (canvas.Height / img.Height));
                     canvas.Children.Add(rect);
                     TextBlock textBlock = new()
                     {
-                        Text = $"Liveness: {face.LivenessScore.ToString()}",
+                        Text = $"Liveness: {face.AntiSpoofing.Reality.ToString()}",
                         Foreground = new SolidColorBrush(Colors.White),
                         FontSize = 16
                     };
-                    Canvas.SetLeft(textBlock, (int)face.FaceDetectorResult.Box.X * (canvas.Width / img.Width));
-                    Canvas.SetTop(textBlock, (int)face.FaceDetectorResult.Box.Y * (canvas.Height / img.Height));
+                    Canvas.SetLeft(textBlock, (int)face.FaceInfo.Location.X * (canvas.Width / img.Width));
+                    Canvas.SetTop(textBlock, (int)face.FaceInfo.Location.Y * (canvas.Height / img.Height));
                     canvas.Children.Add(textBlock);
                 }
 
